@@ -1,0 +1,13 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+opencv-python-headless==4.10.0.84
+numpy==2.2.1
+pillow==11.1.0
+pillow-heif==0.21.0
+vtracer==0.6.11
+reportlab==4.2.5
+pydantic==2.10.4
+pydantic-settings==2.7.0
+defusedxml==0.7.1
+cairosvg==2.7.1

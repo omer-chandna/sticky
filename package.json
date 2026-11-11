@@ -1,0 +1,14 @@
+{
+  "name": "sticky",
+  "private": true,
+  "workspaces": [
+    "apps/web",
+    "packages/shared"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev --workspace @sticky/web",
+    "build:web": "npm run build --workspace @sticky/web",
+    "test:api": "cd services/api && .venv/bin/pytest",
+    "samples": "services/api/.venv/bin/python examples/generate_samples.py"
+  }
+}
