@@ -30,7 +30,7 @@ class GeometryModel(BaseModel):
 class SegmentModel(BaseModel):
     refinement: float = Field(40, ge=0, le=100)
     feather: float = Field(0, ge=0, le=100)
-    backend: Literal["opencv", "rembg"] = "opencv"
+    backend: Literal["opencv", "rembg", "auto"] = "opencv"
 
 
 class RestoreModel(BaseModel):

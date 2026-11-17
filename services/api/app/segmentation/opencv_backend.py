@@ -41,10 +41,16 @@ class OpenCVSegmenter:
         dist = np.linalg.norm(lab - median[None, None, :], axis=2)
         sample_dist = np.linalg.norm(samples - median, axis=1)
         base = float(np.percentile(sample_dist, 90))
+        core = float(np.percentile(sample_dist, 50))
         refinement = float(np.clip(refinement, 0, 100))
         # Higher refinement removes more pixels that resemble the surface.
         threshold = max(6.0, base + 4.0) * (0.72 + 0.55 * (refinement / 100.0))
-        very_close = dist <= max(4.0, base + 2.0)
+        # A die-cut hole is the surface color itself, near the median. The wide
+        # percentile is lighting and stray sticker pixels, so it must not set
+        # this radius. Low refinement only opens an almost exact match.
+        hole_radius = max(4.0, min(12.0, core + 4.0))
+        very_close = dist <= 4.0 + (hole_radius - 4.0) * (refinement / 100.0)
+        very_close = _keep_printed_ink(image_rgb, very_close, geometry, refinement)
         looks_like_foreground = dist > threshold
 
         kernel_px = int(round(3 + (1.0 - refinement / 100.0) * 10))
@@ -90,6 +96,45 @@ class OpenCVSegmenter:
                 "The sticker is hard to separate from the background. Refine the mask with the brush if the edges look wrong."
             )
         return alpha, _unique(warnings)
+
+
+def _keep_printed_ink(
+    image_rgb: np.ndarray,
+    very_close: np.ndarray,
+    geometry: np.ndarray,
+    refinement: float,
+) -> np.ndarray:
+    """Drop ink from the hole mask.
+
+    A die-cut hole is a flat patch of the surface around the sticker. Printed
+    ink can be that same dark color and still has an edge, so its gradient
+    sits above the surface. Those pixels stay opaque. Higher refinement
+    accepts a rougher patch as a hole.
+    """
+    inside = (geometry > 0) & very_close
+    if int(inside.sum()) < 16:
+        return very_close
+    gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
+    magnitude = cv2.magnitude(
+        cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3),
+        cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3),
+    )
+    outside = geometry == 0
+    if int(outside.sum()) < 30:
+        return very_close
+    surface_grad = float(np.median(magnitude[outside]))
+    limit = surface_grad * (1.05 + 0.45 * (float(refinement) / 100.0)) + 1.2
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(inside.astype(np.uint8), connectivity=8)
+    if count <= 1:
+        return very_close
+    kept = very_close.copy()
+    min_hole = max(36, int(0.00035 * geometry.size))
+    for index in range(1, count):
+        area = int(stats[index, cv2.CC_STAT_AREA])
+        component = labels == index
+        if area < min_hole or float(np.median(magnitude[component])) > limit:
+            kept[component] = False
+    return kept
 
 
 def _apply_frame_mask(geometry: np.ndarray) -> np.ndarray:

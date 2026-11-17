@@ -305,7 +305,8 @@ def export_png(storage: Storage, request: PngExportRequest, progress: Progress =
     progress("preparing export")
     image, record = _load_artifact_rgba(storage, request.artifact_id)
     rendered = render_sticker(image, _appearance(request.appearance))
-    data = encode_png(rendered.image)
+    # Record the effective DPI so print tools size the larger raster at the chosen millimetres.
+    data = encode_png(rendered.image, dpi=rendered.image.shape[1] / (rendered.occupied_width_mm / 25.4))
     saved = storage.save_artifact(
         record["upload_id"],
         kind="png",
