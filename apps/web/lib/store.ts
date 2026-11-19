@@ -84,7 +84,7 @@ export type StickerItem = {
   vectorBytes?: number;
   vectorWarnings?: string[];
   mode: "faithful" | "vector";
-  vectorPreset: "logo" | "illustration" | "detailed" | "monochrome";
+  vectorPreset: "redraw" | "logo" | "illustration" | "detailed" | "monochrome";
   vectorControls: VectorControls;
   restore: RestoreSettings;
   appearance: Appearance;
@@ -154,7 +154,7 @@ export const defaultRestore = (): RestoreSettings => ({
   cleanup_strength: 25,
   edge_smoothness: 12,
   color_correction: 0,
-  sharpness: 8,
+  sharpness: 60,
   background_refinement: 40,
   ai_background: true,
   brightness: 0,

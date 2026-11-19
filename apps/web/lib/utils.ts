@@ -14,6 +14,9 @@ export function formatBytes(bytes: number): string {
 export const STAGE_LABELS: Record<string, string> = {
   queued: "Starting",
   loading: "Loading photo",
+  "matching photos": "Lining up photos",
+  "combining photos": "Combining photos",
+  saving: "Saving combined photo",
   "correcting perspective": "Correcting perspective",
   "removing background": "Removing background",
   "cleaning image": "Cleaning image",

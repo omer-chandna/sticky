@@ -1,6 +1,6 @@
 "use client";
 
-import type { Point } from "@sticky/shared";
+import type { Point, UploadResponse } from "@sticky/shared";
 import { fromMillimetres, pageSizeMm, toMillimetres } from "@sticky/shared";
 import {
   Crop,
@@ -20,6 +20,8 @@ import {
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
+import { SteelRuler } from "@/components/landing/craft-tools";
+import { CloudSticker, HelloSticker, StarSticker } from "@/components/landing/sticker-art";
 import { SelectionCanvas } from "@/components/studio/selection-canvas";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
@@ -42,7 +44,7 @@ import {
   runJob,
   uploadImage,
 } from "@/lib/api";
-import { takePendingFile } from "@/lib/pending";
+import { checkPhotos, takePendingFiles } from "@/lib/pending";
 import {
   appearancePayload,
   defaultAppearance,
@@ -85,10 +87,10 @@ export function StudioApp() {
     if (started.current) return;
     started.current = true;
     const boot = () => {
-      const file = takePendingFile();
+      const files = takePendingFiles();
       const mode = sessionStorage.getItem("sticky-mode");
-      if (file) {
-        void ingest(file, mode === "collection" ? "collection" : "single");
+      if (files.length) {
+        void ingest(files, mode === "collection" ? "collection" : "single");
         return;
       }
       const uploadId = useProject.getState().uploadId;
@@ -104,14 +106,33 @@ export function StudioApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function ingest(file: File, mode: "single" | "collection" = project.mode) {
+  async function ingest(files: File[], mode: "single" | "collection" = project.mode) {
+    const problem = checkPhotos(files);
+    if (problem) {
+      setError(problem);
+      return;
+    }
     setError(null);
-    setBusy("Loading photo");
+    setBusy(files.length > 1 ? `Uploading photo 1 of ${files.length}` : "Loading photo");
     try {
-      const uploaded = await uploadImage(file);
+      let uploaded: UploadResponse;
+      if (files.length === 1) {
+        uploaded = await uploadImage(files[0]);
+      } else {
+        const ids: string[] = [];
+        for (const [index, file] of files.entries()) {
+          setBusy(`Uploading photo ${index + 1} of ${files.length}`);
+          ids.push((await uploadImage(file)).upload_id);
+        }
+        const name = files[0].name.replace(/\.[^.]+$/, "") || "Stickers";
+        uploaded = (await runJob({ kind: "fuse", fuse: { upload_ids: ids, name } }, (stage) =>
+          setBusy(STAGE_LABELS[stage] || stage),
+        )) as unknown as UploadResponse;
+        mode = "collection";
+      }
       project.setUpload({
         id: uploaded.upload_id,
-        name: file.name.replace(/\.[^.]+$/, "") || "Sticker",
+        name: files[0].name.replace(/\.[^.]+$/, "") || "Sticker",
         width: uploaded.width,
         height: uploaded.height,
         url: uploaded.preview_url,
@@ -359,23 +380,38 @@ export function StudioApp() {
       </header>
 
       {!project.uploadId && (
-        <div className="mx-auto max-w-xl px-5 py-16 text-center">
-          <h1 className="font-display text-4xl">No photo yet</h1>
-          <p className="mt-3 text-muted">Upload a sticker photograph to start. You can also go back and try an example.</p>
-          <label className="mt-6 inline-block">
-            <span className="sr-only">Upload a photograph</span>
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif"
-              className="sr-only"
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (file) void ingest(file);
-              }}
-            />
-            <span className="inline-flex h-11 cursor-pointer items-center rounded-full bg-accent px-4 text-sm text-accent-ink">Choose a photo</span>
-          </label>
-          {error && <p className="mt-4 text-sm text-warn">{error}</p>}
+        <div className="p-2">
+          <div className="cutting-mat relative flex min-h-[calc(100svh-6.5rem)] items-center justify-center overflow-hidden rounded-3xl px-5 py-16 text-center text-cream">
+            <HelloSticker className="absolute left-[8%] top-12 hidden w-28 -rotate-6 md:block" />
+            <CloudSticker className="absolute bottom-16 right-[10%] hidden w-24 rotate-6 md:block" />
+            <StarSticker className="absolute right-[18%] top-16 hidden w-14 rotate-12 md:block" />
+            <SteelRuler className="on-desk absolute -bottom-3 left-[-4%] hidden w-[46%] rotate-2 md:block" />
+            <div className="relative z-10 max-w-xl">
+              <h1 className="heading-2 hero-cream">No photo yet</h1>
+              <p className="lead mt-4 opacity-80">Upload a sticker photograph to start. Choose several overlapping close-ups of the same stickers to combine them for more detail.</p>
+              <label className="mt-8 inline-block">
+                <span className="sr-only">Upload a photograph</span>
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif"
+                  className="peer sr-only"
+                  multiple
+                  onChange={(event) => {
+                    const files = Array.from(event.target.files ?? []);
+                    if (files.length) void ingest(files);
+                  }}
+                />
+                <span className="button-md inline-flex cursor-pointer items-center rounded-full bg-foam px-6 py-3 text-matcha-deep transition-[transform,background-color] duration-300 ease-base hover:-translate-y-0.5 hover:bg-cream active:scale-[0.98] peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-foam">
+                  Choose photos
+                </span>
+              </label>
+              {error && (
+                <p role="alert" className="body-6 mt-4 text-pop">
+                  {error}
+                </p>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -820,7 +856,7 @@ function VectorPanel({
   onPreset: (preset: StickerItem["vectorPreset"]) => void;
   onControls: (controls: VectorControls) => void;
 }) {
-  const presets: StickerItem["vectorPreset"][] = ["logo", "illustration", "detailed", "monochrome"];
+  const presets: StickerItem["vectorPreset"][] = ["redraw", "logo", "illustration", "detailed", "monochrome"];
   return (
     <div className="space-y-4">
       <h2 className="font-display text-2xl">Reconstruct</h2>
@@ -842,7 +878,13 @@ function VectorPanel({
           </Button>
         ))}
       </div>
-      {(
+      {sticker.vectorPreset === "redraw" && (
+        <p className="text-sm text-muted">
+          Redraw rebuilds the sticker from a few solid inks: grain and uneven lighting are removed and edges come out clean.
+          Best for flat-colour artwork. Very small lettering keeps only the detail the photo holds.
+        </p>
+      )}
+      {sticker.vectorPreset !== "redraw" && (
         [
           ["color_complexity", "Color complexity"],
           ["curve_smoothness", "Curve smoothness"],
