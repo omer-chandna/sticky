@@ -124,10 +124,11 @@ def load_image_bytes(data: bytes, *, max_pixels: int, max_bytes: int) -> LoadedI
     return LoadedImage(rgb=array, warnings=warnings, source_format=source_format)
 
 
-def encode_png(array: np.ndarray) -> bytes:
+def encode_png(array: np.ndarray, dpi: float | None = None) -> bytes:
     image = _to_pil(array)
     buffer = io.BytesIO()
-    image.save(buffer, format="PNG", optimize=True)
+    extra = {"dpi": (dpi, dpi)} if dpi else {}
+    image.save(buffer, format="PNG", optimize=True, **extra)
     return buffer.getvalue()
 
 

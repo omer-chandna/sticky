@@ -58,6 +58,12 @@ def render_sticker(artwork_rgba: np.ndarray, appearance: Appearance) -> Rendered
     dpi = int(np.clip(appearance.dpi, 72, 600))
     content_w = max(32, int(round(appearance.width_mm / 25.4 * dpi)))
     content_h = max(32, int(round(appearance.height_mm / 25.4 * dpi)))
+    # Never throw away restored detail: when the artwork has more pixels than the print size
+    # needs, keep them (a higher effective DPI) instead of shrinking to the minimum.
+    native = min(image.shape[1] / content_w, image.shape[0] / content_h)
+    if native > 1:
+        content_w = int(round(content_w * native))
+        content_h = int(round(content_h * native))
     # Cap the raster so a huge millimetre value cannot exhaust memory.
     longest = max(content_w, content_h)
     if longest > 4500:

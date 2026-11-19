@@ -11,7 +11,7 @@ import numpy as np
 from PIL import Image
 
 from app.core.config import Settings
-from app.core.images import encode_png
+from app.core.images import LoadedImage, encode_png
 from app.core.storage import Storage
 from app.exports.pdf_export import build_sheet_pdf
 from app.exports.render import Appearance, RenderedSticker, cutline_svg, hybrid_svg, render_sticker, vector_svg_with_size
@@ -19,6 +19,7 @@ from app.exports.sheet import LayoutResult, PlacedItem, SheetItem, SheetSpec, pa
 from app.exports.zip_export import build_zip
 from app.processing.cutline import CutlineConfig, generate_cutline
 from app.processing.detect import DetectConfig, detect_stickers
+from app.processing.fuse import FuseConfig, fuse_photos
 from app.processing.pipeline import (
     GeometryInput,
     PipelineConfig,
@@ -31,6 +32,7 @@ from app.schemas.models import (
     AppearanceModel,
     CutlineRequest,
     DetectRequest,
+    FuseRequest,
     PngExportRequest,
     RestoreRequest,
     SheetRequest,
@@ -81,6 +83,31 @@ def detect_upload(storage: Storage, request: DetectRequest) -> dict[str, Any]:
             }
             for candidate in result.candidates
         ],
+    }
+
+
+def fuse_uploads(
+    storage: Storage,
+    settings: Settings,
+    request: FuseRequest,
+    progress: Progress = _noop,
+) -> dict[str, Any]:
+    """Line up overlapping photos of the same stickers and save the combined image as a new upload."""
+    progress("loading")
+    images = [_load_upload(storage, upload_id) for upload_id in request.upload_ids]
+    first = storage.get_upload(request.upload_ids[0])
+    result = fuse_photos(images, FuseConfig(max_pixels=settings.max_pixels), progress)
+    progress("saving")
+    base = (request.name or first.get("filename") or "stickers").rsplit(".", 1)[0]
+    meta = storage.create_upload(
+        LoadedImage(rgb=result.image, warnings=result.warnings, source_format="combined"),
+        f"{base}-combined.png",
+    )
+    return {
+        **meta,
+        "preview_url": f"/api/uploads/{meta['upload_id']}/image?max_dimension={settings.preview_max_dimension}",
+        "photos_used": len(result.used),
+        "photos_dropped": [request.upload_ids[i] for i in result.dropped],
     }
 
 
@@ -305,7 +332,8 @@ def export_png(storage: Storage, request: PngExportRequest, progress: Progress =
     progress("preparing export")
     image, record = _load_artifact_rgba(storage, request.artifact_id)
     rendered = render_sticker(image, _appearance(request.appearance))
-    data = encode_png(rendered.image)
+    # Record the effective DPI so print tools size the larger raster at the chosen millimetres.
+    data = encode_png(rendered.image, dpi=rendered.image.shape[1] / (rendered.occupied_width_mm / 25.4))
     saved = storage.save_artifact(
         record["upload_id"],
         kind="png",

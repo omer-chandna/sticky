@@ -1,3 +1,4 @@
+import cv2
 import numpy as np
 
 from app.processing.geometry import normalize_points
@@ -81,6 +82,58 @@ def test_a_full_frame_quad_keeps_the_sticker_color():
     opaque = alpha > 200
     assert opaque.mean() > 0.75
     assert result.image[:, :, 0][opaque].mean() > 150
+
+
+def test_textured_dark_print_stays_while_a_flat_hole_opens():
+    """Ink can be as dark as the desk. An edge keeps it; a flat hole does not.
+
+    An uneven desk stretches the color match until the print is deleted.
+    A die-cut hole is a flat patch of that same desk, so it still opens.
+    """
+    height, width = 420, 640
+    base = np.array([40, 42, 46], np.int16)
+    noise = np.random.default_rng(0).integers(-14, 15, size=(height, width, 3), dtype=np.int16)
+    image = np.clip(base + noise, 0, 255).astype(np.uint8)
+    cv2.rectangle(image, (70, 40), (580, 370), (214, 210, 202), thickness=-1)
+    dark = tuple(int(value) for value in np.clip(base - 6, 0, 255))
+    light = tuple(int(value) for value in np.clip(base + 4, 0, 255))
+    for y in range(155, 255):
+        image[y, 150:340] = dark if (y // 2) % 2 == 0 else light
+    cv2.circle(image, (480, 250), 30, tuple(int(value) for value in base), thickness=-1)
+    geometry = np.zeros((height, width), np.uint8)
+    cv2.rectangle(geometry, (50, 25), (600, 390), 255, thickness=-1)
+
+    alpha = segment_image(image, geometry, None, SegmentConfig(refinement=40, feather=0)).alpha
+    assert alpha[160, 200] > 200
+    assert alpha[157, 200] > 200
+    assert alpha[250, 480] < 40
+    assert alpha[90, 100] > 200
+
+
+def test_dark_print_stays_when_the_surface_sample_is_uneven():
+    """Dark ink is not a die-cut hole just because the desk sample is uneven.
+
+    A few bright pixels outside the selection used to stretch the surface
+    match until the print was deleted. A hole that really is the desk color
+    still stays open.
+    """
+    height, width = 360, 520
+    image = np.zeros((height, width, 3), np.uint8)
+    surface = (36, 38, 42)
+    image[:, :] = surface
+    image[0:30, 200:400] = (110, 112, 108)
+    image[330:359, 80:240] = (110, 112, 108)
+    image[40:300, 0:25] = (110, 112, 108)
+    cv2.rectangle(image, (80, 50), (460, 310), (214, 208, 200), thickness=-1)
+    cv2.rectangle(image, (150, 140), (300, 220), (58, 52, 48), thickness=-1)
+    cv2.circle(image, (380, 230), 24, surface, thickness=-1)
+    geometry = np.zeros((height, width), np.uint8)
+    cv2.rectangle(geometry, (70, 40), (470, 320), 255, thickness=-1)
+
+    alpha = segment_image(image, geometry, None, SegmentConfig(refinement=40, feather=0)).alpha
+    assert alpha[180, 220] > 200
+    assert alpha[230, 380] < 40
+    assert alpha[90, 140] > 200
 
 
 def test_manual_polygon_works_when_detection_would_be_unsure():

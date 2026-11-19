@@ -18,7 +18,7 @@ class RestoreConfig:
     cleanup_strength: float = 30
     edge_smoothness: float = 15
     color_correction: float = 0
-    sharpness: float = 10
+    sharpness: float = 60
     brightness: float = 0
     contrast: float = 0
     saturation: float = 0
@@ -56,11 +56,12 @@ def restore_image(image_rgb: np.ndarray, alpha: np.ndarray, config: RestoreConfi
 
     denoise_amount = max(_unit(config.denoise), _unit(config.cleanup_strength) * 0.65)
     if denoise_amount > 0.05:
-        sigma = 4 + denoise_amount * 22
+        # Non-local means removes camera grain from flat print while keeping letter
+        # edges, which a bilateral filter rounds off. Cleanup 25 gives h ~7.
+        strength = 4 + denoise_amount * 20
         rgb_u8 = np.clip(rgb, 0, 255).astype(np.uint8)
-        filtered = cv2.bilateralFilter(rgb_u8, d=5, sigmaColor=sigma, sigmaSpace=sigma)
-        # Keep the bilateral result mild: cleanup should not turn type into plastic.
-        rgb = _blend(filtered.astype(np.float32), rgb, min(0.85, denoise_amount))
+        filtered = cv2.fastNlMeansDenoisingColored(rgb_u8, None, strength, strength, 7, 21)
+        rgb = filtered.astype(np.float32)
 
     illumination_applied = False
     if config.clahe or config.cleanup_strength >= 85:
@@ -80,8 +81,9 @@ def restore_image(image_rgb: np.ndarray, alpha: np.ndarray, config: RestoreConfi
     sharp = _unit(config.sharpness)
     if sharp > 0:
         rgb_u8 = np.clip(rgb, 0, 255).astype(np.uint8)
-        blurred = cv2.GaussianBlur(rgb_u8, (0, 0), 1.1)
-        amount = sharp * 0.75
+        # Runs after denoising, so it restores edge contrast without amplifying grain.
+        blurred = cv2.GaussianBlur(rgb_u8, (0, 0), 1.5)
+        amount = sharp * 1.5
         sharpened = cv2.addWeighted(rgb_u8, 1 + amount, blurred, -amount, 0)
         rgb = sharpened.astype(np.float32)
 

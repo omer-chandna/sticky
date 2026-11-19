@@ -2,35 +2,47 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Matcha: oat milk paper, whisked matcha, bamboo, and chawan clay. */
 :root {
-  --bg: #f3efe7;
-  --elev: #fffcf8;
-  --ink: #1d1916;
-  --muted: #6f675f;
-  --line: #e3d9cc;
-  --accent: #e23b2b;
-  --accent-ink: #fff8f5;
-  --good: #1d7a58;
+  --bg: #f4efe2;
+  --elev: #fbf8f0;
+  --ink: #1e2814;
+  --muted: #5e6a4e;
+  --line: #e2dbc6;
+  --dot: #d5ccb1;
+  --accent: #5c7f23;
+  --accent-ink: #ffffff;
+  --pop: #e3b85c;
+  --matcha: #8aa83f;
+  --matcha-deep: #26330f;
+  --foam: #c9d98e;
+  --clay: #b4683f;
+  --cream: #f4efe2;
+  --good: #4a6b1c;
   --warn: #9a5b09;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
   color-scheme: light;
 }
 
 .dark {
-  --bg: #141210;
-  --elev: #211d1a;
-  --ink: #f6f1ea;
-  --muted: #b7aba1;
-  --line: #3a332d;
-  --accent: #ff5d49;
-  --accent-ink: #2a100d;
-  --good: #49c896;
+  --bg: #131209;
+  --elev: #1f1f1f;
+  --ink: #f4efe2;
+  --muted: #aeb59a;
+  --line: #313131;
+  --dot: #2c3320;
+  --accent: #a9c85a;
+  --accent-ink: #131209;
+  --pop: #e3b85c;
+  --matcha-deep: #1c260b;
+  --good: #a9c85a;
   --warn: #efc07a;
   color-scheme: dark;
 }
 
 html,
 body {
-  background: var(--bg);
+  background-color: var(--bg);
   color: var(--ink);
 }
 
@@ -38,29 +50,88 @@ body {
   min-height: 100vh;
 }
 
+/* Cutting mat dot grid. The page is flat colour; the dots are a pattern on top. */
+.dot-grid {
+  background-color: var(--bg);
+  background-image: radial-gradient(var(--dot) 1.2px, transparent 1.4px);
+  background-size: 16px 16px;
+  background-position: 8px 8px;
+}
+
+.dot-grid-deep {
+  background-color: var(--matcha-deep);
+  background-image: radial-gradient(rgba(201, 217, 142, 0.22) 1.2px, transparent 1.4px);
+  background-size: 20px 20px;
+  background-position: 10px 10px;
+}
+
+/* Self healing cutting mat: 1 cm grid, heavier every 5 cm, in matcha green */
+.cutting-mat {
+  background-color: var(--matcha-deep);
+  background-image:
+    linear-gradient(rgba(201, 217, 142, 0.26) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(201, 217, 142, 0.26) 1px, transparent 1px),
+    linear-gradient(rgba(201, 217, 142, 0.09) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(201, 217, 142, 0.09) 1px, transparent 1px);
+  background-size: 120px 120px, 120px 120px, 24px 24px, 24px 24px;
+  background-position: -1px -1px;
+}
+
+/* Objects lying on the desk cast a soft shadow down and to the right */
+.on-desk { filter: drop-shadow(6px 12px 10px rgba(8, 12, 2, 0.45)); }
+
+@keyframes cut-line { from { stroke-dashoffset: var(--len, 1200); } to { stroke-dashoffset: 0; } }
+.cut-line { stroke-dasharray: var(--len, 1200); animation: cut-line 2400ms var(--ease) 900ms both; }
+
+@keyframes knife-in {
+  from { opacity: 0; transform: translate(60px, -40px) rotate(var(--r, 0deg)); }
+  to { opacity: 1; transform: translate(0, 0) rotate(var(--r, 0deg)); }
+}
+.knife-in { animation: knife-in 1000ms var(--ease) 500ms both; transform: rotate(var(--r, 0deg)); }
+
+.lift { transition: transform 500ms var(--ease); }
+.lift:hover { transform: translateY(-4px) rotate(var(--r, 0deg)) scale(1.02); }
+
+/* White die cut border around any transparent image or SVG sticker */
+.die-cut {
+  filter: drop-shadow(0 0 0 #fff) drop-shadow(4px 0 0 #fff) drop-shadow(-4px 0 0 #fff) drop-shadow(0 4px 0 #fff)
+    drop-shadow(0 -4px 0 #fff) drop-shadow(0 16px 20px rgba(14, 20, 6, 0.35));
+}
+
+.glass {
+  background-color: color-mix(in srgb, var(--elev) 72%, transparent);
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+}
+
+.font-display {
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
 ::selection {
-  background: #f3b2a8;
-  color: #1d1916;
+  background: var(--pop);
+  color: #1b2418;
 }
 
 .checker {
-  background-color: #efeae3;
+  background-color: #f2f4ec;
   background-image:
-    linear-gradient(45deg, #d9d1c6 25%, transparent 25%),
-    linear-gradient(-45deg, #d9d1c6 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, #d9d1c6 75%),
-    linear-gradient(-45deg, transparent 75%, #d9d1c6 75%);
+    linear-gradient(45deg, #dde2d1 25%, transparent 25%),
+    linear-gradient(-45deg, #dde2d1 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #dde2d1 75%),
+    linear-gradient(-45deg, transparent 75%, #dde2d1 75%);
   background-size: 24px 24px;
   background-position: 0 0, 0 12px, 12px -12px, -12px 0;
 }
 
 .dark .checker {
-  background-color: #2a2522;
+  background-color: #1f1f1f;
   background-image:
-    linear-gradient(45deg, #3a342f 25%, transparent 25%),
-    linear-gradient(-45deg, #3a342f 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, #3a342f 75%),
-    linear-gradient(-45deg, transparent 75%, #3a342f 75%);
+    linear-gradient(45deg, #2a2d26 25%, transparent 25%),
+    linear-gradient(-45deg, #2a2d26 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #2a2d26 75%),
+    linear-gradient(-45deg, transparent 75%, #2a2d26 75%);
 }
 
 input[type="range"] {
@@ -70,4 +141,82 @@ input[type="range"] {
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+@layer components {
+  /* Text styles. Sizes come from the Tailwind scale. */
+  .display-1 { @apply text-5xl font-semibold sm:text-7xl lg:text-6xl xl:text-7xl; letter-spacing: -0.04em; text-wrap: balance; }
+  .heading-1 { @apply text-6xl font-semibold; letter-spacing: -0.03em; text-wrap: balance; }
+  .heading-2 { @apply text-4xl font-semibold sm:text-5xl; letter-spacing: -0.03em; text-wrap: balance; }
+  .heading-3 { @apply text-4xl font-semibold; letter-spacing: -0.02em; text-wrap: balance; }
+  .heading-5 { @apply text-2xl font-semibold; letter-spacing: -0.01em; text-wrap: balance; }
+  .title-2 { @apply text-lg font-medium; }
+  .title-3 { @apply text-base font-medium; }
+  .title-4 { @apply text-sm font-medium; }
+  .body-3 { @apply text-base font-normal; text-wrap: pretty; }
+  .body-6 { @apply text-sm font-normal; text-wrap: pretty; }
+  .button-md { @apply text-base font-semibold; }
+  .button-sm { @apply text-sm font-semibold; }
+  .caption-4 { @apply font-mono text-xs font-medium uppercase tracking-widest; }
+  .caption-5 { @apply text-xs font-normal; }
+
+  .lead { @apply text-lg font-normal sm:text-xl; text-wrap: pretty; }
+
+  .hero-ink {
+    background-image: linear-gradient(90deg, var(--ink), var(--muted));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .hero-cream {
+    background-image: linear-gradient(90deg, #f4efe2, #c9d98e);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .ease-base { transition-timing-function: var(--ease); }
+}
+
+/* Scroll reveals */
+.reveal {
+  opacity: 0;
+  transform: translateY(32px);
+  transition: opacity 700ms var(--ease), transform 700ms var(--ease);
+}
+.reveal.is-in {
+  opacity: 1;
+  transform: none;
+}
+
+/* Hero stickers land on the mat */
+@keyframes stick {
+  from { opacity: 0; transform: translateY(24px) rotate(var(--r-from, 0deg)) scale(1.08); }
+  to { opacity: 1; transform: translateY(0) rotate(var(--r, 0deg)) scale(1); }
+}
+.stick {
+  opacity: 0;
+  transform: rotate(var(--r, 0deg));
+  animation: stick 800ms var(--ease) forwards;
+  animation-delay: var(--d, 0ms);
+}
+
+@keyframes bob {
+  0%, 100% { transform: translateY(0) rotate(var(--r, 0deg)); }
+  50% { transform: translateY(-8px) rotate(calc(var(--r, 0deg) + 1.5deg)); }
+}
+.bob { animation: bob 6s var(--ease) infinite; animation-delay: var(--bd, 0ms); }
+
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.marquee { animation: marquee 32s linear infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .bob, .marquee, .knife-in { animation: none; }
+  .cut-line { animation: none; stroke-dasharray: none; }
+  .reveal { transform: none; transition: opacity 300ms var(--ease); }
+  .stick { animation: none; opacity: 1; }
 }

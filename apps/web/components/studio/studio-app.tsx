@@ -1,6 +1,6 @@
 "use client";
 
-import type { Point } from "@sticky/shared";
+import type { Point, UploadResponse } from "@sticky/shared";
 import { fromMillimetres, pageSizeMm, toMillimetres } from "@sticky/shared";
 import {
   Crop,
@@ -20,6 +20,8 @@ import {
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
+import { SteelRuler } from "@/components/landing/craft-tools";
+import { CloudSticker, HelloSticker, StarSticker } from "@/components/landing/sticker-art";
 import { SelectionCanvas } from "@/components/studio/selection-canvas";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
@@ -42,7 +44,7 @@ import {
   runJob,
   uploadImage,
 } from "@/lib/api";
-import { takePendingFile } from "@/lib/pending";
+import { checkPhotos, takePendingFiles } from "@/lib/pending";
 import {
   appearancePayload,
   defaultAppearance,
@@ -85,10 +87,10 @@ export function StudioApp() {
     if (started.current) return;
     started.current = true;
     const boot = () => {
-      const file = takePendingFile();
+      const files = takePendingFiles();
       const mode = sessionStorage.getItem("sticky-mode");
-      if (file) {
-        void ingest(file, mode === "collection" ? "collection" : "single");
+      if (files.length) {
+        void ingest(files, mode === "collection" ? "collection" : "single");
         return;
       }
       const uploadId = useProject.getState().uploadId;
@@ -104,14 +106,33 @@ export function StudioApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function ingest(file: File, mode: "single" | "collection" = project.mode) {
+  async function ingest(files: File[], mode: "single" | "collection" = project.mode) {
+    const problem = checkPhotos(files);
+    if (problem) {
+      setError(problem);
+      return;
+    }
     setError(null);
-    setBusy("Loading photo");
+    setBusy(files.length > 1 ? `Uploading photo 1 of ${files.length}` : "Loading photo");
     try {
-      const uploaded = await uploadImage(file);
+      let uploaded: UploadResponse;
+      if (files.length === 1) {
+        uploaded = await uploadImage(files[0]);
+      } else {
+        const ids: string[] = [];
+        for (const [index, file] of files.entries()) {
+          setBusy(`Uploading photo ${index + 1} of ${files.length}`);
+          ids.push((await uploadImage(file)).upload_id);
+        }
+        const name = files[0].name.replace(/\.[^.]+$/, "") || "Stickers";
+        uploaded = (await runJob({ kind: "fuse", fuse: { upload_ids: ids, name } }, (stage) =>
+          setBusy(STAGE_LABELS[stage] || stage),
+        )) as unknown as UploadResponse;
+        mode = "collection";
+      }
       project.setUpload({
         id: uploaded.upload_id,
-        name: file.name.replace(/\.[^.]+$/, "") || "Sticker",
+        name: files[0].name.replace(/\.[^.]+$/, "") || "Sticker",
         width: uploaded.width,
         height: uploaded.height,
         url: uploaded.preview_url,
@@ -164,50 +185,10 @@ export function StudioApp() {
     }
   }
 
-  async function restoreOne(sticker: StickerItem, quality: "preview" | "final" = "preview") {
+  async function restoreOne(sticker: StickerItem) {
     if (!project.uploadId) throw new Error("Upload a photo first.");
-    const usePrepared = Boolean(sticker.preparedId) && !sticker.brushDataUrl && quality === "preview";
-    const result = (await runJob(
-      {
-        kind: "restore",
-        restore: {
-          upload_id: project.uploadId,
-          quality,
-          prepared_artifact_id: usePrepared ? sticker.preparedId : undefined,
-          geometry: {
-            polygon: usePrepared ? null : sticker.polygon,
-            quad: sticker.usePerspective ? sticker.quad : null,
-            apply_perspective: Boolean(sticker.usePerspective && sticker.quad && !usePrepared),
-            mask_png_base64: sticker.brushDataUrl,
-            authoritative_mask: sticker.authoritativeMask,
-          },
-          segment: { refinement: sticker.restore.background_refinement, feather: 0, backend: "opencv" },
-          restore: {
-            cleanup_strength: sticker.restore.cleanup_strength,
-            edge_smoothness: sticker.restore.edge_smoothness,
-            color_correction: sticker.restore.color_correction,
-            sharpness: sticker.restore.sharpness,
-            brightness: sticker.restore.brightness,
-            contrast: sticker.restore.contrast,
-            saturation: sticker.restore.saturation,
-            exposure: sticker.restore.exposure,
-            denoise: sticker.restore.denoise,
-            white_balance: sticker.restore.white_balance,
-            clahe: sticker.restore.clahe,
-          },
-        },
-      },
-      (stage) => setBusy(STAGE_LABELS[stage] || stage),
-    )) as unknown as {
-      artifact_id: string;
-      prepared_artifact_id: string;
-      before_url: string;
-      preview_url: string;
-      width: number;
-      height: number;
-      warnings: string[];
-      cutline: { path_d: string; view_width: number; view_height: number };
-    };
+    const mask = stickerMask(sticker);
+    const result = await runRestore(project.uploadId, sticker, "preview", (stage) => setBusy(STAGE_LABELS[stage] || stage));
     const aspect = result.height / Math.max(result.width, 1);
     project.updateSticker(sticker.id, {
       artifactId: result.artifact_id,
@@ -221,6 +202,7 @@ export function StudioApp() {
       cutlineView: { width: result.cutline.view_width, height: result.cutline.view_height },
       brushDataUrl: null,
       authoritativeMask: false,
+      appliedMask: mask,
       appearance: sticker.appearance.lockAspect
         ? { ...sticker.appearance, heightMm: Math.round(sticker.appearance.widthMm * aspect * 10) / 10 }
         : sticker.appearance,
@@ -337,8 +319,11 @@ export function StudioApp() {
     setError(null);
     setBusy("Preparing export");
     try {
+      if (!project.uploadId) throw new Error("Upload a photo first.");
+      const full = await runRestore(project.uploadId, active, "final", () => setBusy("Restoring at full resolution"));
+      setBusy("Preparing export");
       const appearance = appearancePayload(active.appearance);
-      const common = { artifact_id: active.artifactId, appearance };
+      const common = { artifact_id: full.artifact_id, appearance };
       const result =
         kind === "png"
           ? await exportPng(common)
@@ -395,23 +380,38 @@ export function StudioApp() {
       </header>
 
       {!project.uploadId && (
-        <div className="mx-auto max-w-xl px-5 py-16 text-center">
-          <h1 className="font-display text-4xl">No photo yet</h1>
-          <p className="mt-3 text-muted">Upload a sticker photograph to start. You can also go back and try an example.</p>
-          <label className="mt-6 inline-block">
-            <span className="sr-only">Upload a photograph</span>
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif"
-              className="sr-only"
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (file) void ingest(file);
-              }}
-            />
-            <span className="inline-flex h-11 cursor-pointer items-center rounded-full bg-accent px-4 text-sm text-accent-ink">Choose a photo</span>
-          </label>
-          {error && <p className="mt-4 text-sm text-warn">{error}</p>}
+        <div className="p-2">
+          <div className="cutting-mat relative flex min-h-[calc(100svh-6.5rem)] items-center justify-center overflow-hidden rounded-3xl px-5 py-16 text-center text-cream">
+            <HelloSticker className="absolute left-[8%] top-12 hidden w-28 -rotate-6 md:block" />
+            <CloudSticker className="absolute bottom-16 right-[10%] hidden w-24 rotate-6 md:block" />
+            <StarSticker className="absolute right-[18%] top-16 hidden w-14 rotate-12 md:block" />
+            <SteelRuler className="on-desk absolute -bottom-3 left-[-4%] hidden w-[46%] rotate-2 md:block" />
+            <div className="relative z-10 max-w-xl">
+              <h1 className="heading-2 hero-cream">No photo yet</h1>
+              <p className="lead mt-4 opacity-80">Upload a sticker photograph to start. Choose several overlapping close-ups of the same stickers to combine them for more detail.</p>
+              <label className="mt-8 inline-block">
+                <span className="sr-only">Upload a photograph</span>
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif"
+                  className="peer sr-only"
+                  multiple
+                  onChange={(event) => {
+                    const files = Array.from(event.target.files ?? []);
+                    if (files.length) void ingest(files);
+                  }}
+                />
+                <span className="button-md inline-flex cursor-pointer items-center rounded-full bg-foam px-6 py-3 text-matcha-deep transition-[transform,background-color] duration-300 ease-base hover:-translate-y-0.5 hover:bg-cream active:scale-[0.98] peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-foam">
+                  Choose photos
+                </span>
+              </label>
+              {error && (
+                <p role="alert" className="body-6 mt-4 text-pop">
+                  {error}
+                </p>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -520,6 +520,73 @@ export function StudioApp() {
     project.setMode(mode);
     if (project.uploadId) await runDetect(project.uploadId, mode);
   }
+}
+
+type RestoreResult = {
+  artifact_id: string;
+  prepared_artifact_id: string;
+  before_url: string;
+  preview_url: string;
+  width: number;
+  height: number;
+  warnings: string[];
+  cutline: { path_d: string; view_width: number; view_height: number };
+};
+
+/** The brush mask to apply: a fresh brush stroke, or the one behind the current result. */
+function stickerMask(sticker: StickerItem): { dataUrl: string; authoritative: boolean } | null {
+  if (sticker.brushDataUrl) return { dataUrl: sticker.brushDataUrl, authoritative: sticker.authoritativeMask };
+  return sticker.appliedMask ?? null;
+}
+
+/**
+ * Restore a sticker. "preview" is capped for fast editing; "final" re-runs from the original
+ * photo at full resolution and is what downloads use. The API caches identical requests.
+ */
+async function runRestore(
+  uploadId: string,
+  sticker: StickerItem,
+  quality: "preview" | "final",
+  onStage: (stage: string) => void,
+): Promise<RestoreResult> {
+  const mask = stickerMask(sticker);
+  const usePrepared = Boolean(sticker.preparedId) && !mask && quality === "preview";
+  return (await runJob(
+    {
+      kind: "restore",
+      restore: {
+        upload_id: uploadId,
+        quality,
+        prepared_artifact_id: usePrepared ? sticker.preparedId : undefined,
+        geometry: {
+          polygon: usePrepared ? null : sticker.polygon,
+          quad: sticker.usePerspective ? sticker.quad : null,
+          apply_perspective: Boolean(sticker.usePerspective && sticker.quad && !usePrepared),
+          mask_png_base64: mask?.dataUrl ?? null,
+          authoritative_mask: mask?.authoritative ?? false,
+        },
+        segment: {
+          refinement: sticker.restore.background_refinement,
+          feather: 0,
+          backend: sticker.restore.ai_background === false ? "opencv" : "auto",
+        },
+        restore: {
+          cleanup_strength: sticker.restore.cleanup_strength,
+          edge_smoothness: sticker.restore.edge_smoothness,
+          color_correction: sticker.restore.color_correction,
+          sharpness: sticker.restore.sharpness,
+          brightness: sticker.restore.brightness,
+          contrast: sticker.restore.contrast,
+          saturation: sticker.restore.saturation,
+          exposure: sticker.restore.exposure,
+          denoise: sticker.restore.denoise,
+          white_balance: sticker.restore.white_balance,
+          clahe: sticker.restore.clahe,
+        },
+      },
+    },
+    onStage,
+  )) as unknown as RestoreResult;
 }
 
 function makeSticker(
@@ -653,7 +720,7 @@ function SelectPanel({
         onClick={() => {
           if (!active) return;
           project.pushHistory();
-          project.updateSticker(active.id, { polygon: active.detectedPolygon, brushDataUrl: null, authoritativeMask: false });
+          project.updateSticker(active.id, { polygon: active.detectedPolygon, brushDataUrl: null, authoritativeMask: false, appliedMask: null });
         }}
       >
         Reset outline
@@ -730,6 +797,23 @@ function RestorePanel({
       <LabeledSlider label="Color correction" value={restore.color_correction} min={0} max={100} onChange={(value) => set("color_correction", value)} onCommit={onCommit} />
       <LabeledSlider label="Sharpness" value={restore.sharpness} min={0} max={100} onChange={(value) => set("sharpness", value)} onCommit={onCommit} />
       <LabeledSlider label="Background removal" value={restore.background_refinement} min={0} max={100} onChange={(value) => set("background_refinement", value)} onCommit={onCommit} />
+      <label className="flex items-start justify-between gap-3 text-sm">
+        <span>
+          AI background removal
+          <span className="mt-0.5 block text-xs text-muted">
+            Better when the sticker&apos;s edge matches the surface behind it. Runs on this computer when the server has it turned on.
+          </span>
+        </span>
+        <input
+          type="checkbox"
+          className="mt-1"
+          checked={restore.ai_background !== false}
+          onChange={(event) => {
+            set("ai_background", event.target.checked);
+            onCommit();
+          }}
+        />
+      </label>
       <button className="text-sm underline" onClick={() => setAdvanced((open) => !open)}>
         {advanced ? "Hide advanced" : "Advanced"}
       </button>
@@ -772,7 +856,7 @@ function VectorPanel({
   onPreset: (preset: StickerItem["vectorPreset"]) => void;
   onControls: (controls: VectorControls) => void;
 }) {
-  const presets: StickerItem["vectorPreset"][] = ["logo", "illustration", "detailed", "monochrome"];
+  const presets: StickerItem["vectorPreset"][] = ["redraw", "logo", "illustration", "detailed", "monochrome"];
   return (
     <div className="space-y-4">
       <h2 className="font-display text-2xl">Reconstruct</h2>
@@ -794,7 +878,13 @@ function VectorPanel({
           </Button>
         ))}
       </div>
-      {(
+      {sticker.vectorPreset === "redraw" && (
+        <p className="text-sm text-muted">
+          Redraw rebuilds the sticker from a few solid inks: grain and uneven lighting are removed and edges come out clean.
+          Best for flat-colour artwork. Very small lettering keeps only the detail the photo holds.
+        </p>
+      )}
+      {sticker.vectorPreset !== "redraw" && (
         [
           ["color_complexity", "Color complexity"],
           ["curve_smoothness", "Curve smoothness"],
@@ -1084,7 +1174,16 @@ function SheetEditor({
     setError(null);
     setBusy("Preparing export");
     try {
-      const result = await exportSheet(sheetBody(false));
+      if (!project.uploadId) throw new Error("Upload a photo first.");
+      const fullIds = new Map<string, string>();
+      for (const id of new Set(project.sheet.map((item) => item.stickerId))) {
+        const sticker = project.stickers.find((entry) => entry.id === id);
+        if (!sticker?.artifactId) continue;
+        setBusy(`Restoring ${sticker.name} at full resolution`);
+        fullIds.set(id, (await runRestore(project.uploadId, sticker, "final", () => undefined)).artifact_id);
+      }
+      setBusy("Preparing export");
+      const result = await exportSheet(sheetBody(false, fullIds));
       if (result.download_url && result.filename) await downloadFile(result.download_url, result.filename);
       project.setWarnings(result.warnings || []);
     } catch (reason) {
@@ -1094,7 +1193,7 @@ function SheetEditor({
     }
   }
 
-  function sheetBody(auto: boolean) {
+  function sheetBody(auto: boolean, fullIds?: Map<string, string>) {
     return {
       page: project.page,
       orientation: project.orientation,
@@ -1108,7 +1207,7 @@ function SheetEditor({
         const sticker = project.stickers.find((entry) => entry.id === item.stickerId);
         return {
           id: item.key,
-          artifact_id: sticker?.artifactId,
+          artifact_id: (sticker && fullIds?.get(sticker.id)) || sticker?.artifactId,
           x_mm: item.xMm,
           y_mm: item.yMm,
           rotation_deg: item.rotation,

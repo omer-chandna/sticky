@@ -14,6 +14,8 @@ export type RestoreSettings = {
   color_correction: number;
   sharpness: number;
   background_refinement: number;
+  /** Use the AI background remover when the server has it. Missing (older projects) means on. */
+  ai_background?: boolean;
   brightness: number;
   contrast: number;
   saturation: number;
@@ -63,6 +65,8 @@ export type StickerItem = {
   confidence: number;
   brushDataUrl: string | null;
   authoritativeMask: boolean;
+  /** The brush mask behind the current result, replayed for later and full-resolution restores. */
+  appliedMask?: { dataUrl: string; authoritative: boolean } | null;
   artifactId?: string;
   preparedId?: string;
   beforeUrl?: string;
@@ -80,7 +84,7 @@ export type StickerItem = {
   vectorBytes?: number;
   vectorWarnings?: string[];
   mode: "faithful" | "vector";
-  vectorPreset: "logo" | "illustration" | "detailed" | "monochrome";
+  vectorPreset: "redraw" | "logo" | "illustration" | "detailed" | "monochrome";
   vectorControls: VectorControls;
   restore: RestoreSettings;
   appearance: Appearance;
@@ -150,8 +154,9 @@ export const defaultRestore = (): RestoreSettings => ({
   cleanup_strength: 25,
   edge_smoothness: 12,
   color_correction: 0,
-  sharpness: 8,
+  sharpness: 60,
   background_refinement: 40,
+  ai_background: true,
   brightness: 0,
   contrast: 0,
   saturation: 0,

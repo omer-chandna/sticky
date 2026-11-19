@@ -64,8 +64,7 @@ def detect_stickers(image_rgb: np.ndarray, config: DetectConfig | None = None) -
     median = np.median(samples, axis=0)
     border_dist = np.linalg.norm(lab - median[None, None, :], axis=2)
     sample_dist = np.linalg.norm(samples - median, axis=1)
-    base = float(np.percentile(sample_dist, 97))
-    thr = max(8.0, base * 2.0 + 5.0)
+    base, thr = _surface_threshold(sample_dist)
 
     local = _local_distance(lab)
     local_thr = max(5.5, float(np.percentile(local, 82)) * 0.85)
@@ -83,7 +82,7 @@ def detect_stickers(image_rgb: np.ndarray, config: DetectConfig | None = None) -
         x, y, bw, bh = cv2.boundingRect(contour)
         if bw < 8 or bh < 8:
             continue
-        if (x <= 1 and x + bw >= ww - 1) or (y <= 1 and y + bh >= wh - 1):
+        if _spans_the_frame(x, y, bw, bh, ww, wh, area, image_area):
             continue
         region = np.zeros((wh, ww), np.uint8)
         cv2.drawContours(region, [contour], -1, 255, thickness=-1)
@@ -197,6 +196,45 @@ def detect_stickers(image_rgb: np.ndarray, config: DetectConfig | None = None) -
     )
 
 
+def _surface_threshold(sample_dist: np.ndarray) -> tuple[float, float]:
+    """Distance cutoff for pixels that are not the surface around the sticker.
+
+    The high percentile of border distances is the surface's own variation when
+    the border is one material. A sticker that runs into the frame makes that
+    percentile the sticker-to-surface distance, and doubling it puts the cutoff
+    above every pixel. The typical border pixel is the surface in that case.
+    """
+    core = float(np.percentile(sample_dist, 50))
+    high = float(np.percentile(sample_dist, 97))
+    base = core if high > core * 3.0 + 15.0 else high
+    return base, max(8.0, base * 2.0 + 5.0)
+
+
+def _spans_the_frame(
+    x: int,
+    y: int,
+    bw: int,
+    bh: int,
+    width: int,
+    height: int,
+    area: float,
+    image_area: float,
+) -> bool:
+    """True when a contour is the frame or a thin streak across it.
+
+    A sticker photographed up close can touch two opposite edges. That is
+    still a sticker. A region that reaches all four edges, or a thin band
+    from edge to edge, is not.
+    """
+    spans_x = x <= 1 and x + bw >= width - 1
+    spans_y = y <= 1 and y + bh >= height - 1
+    if spans_x and spans_y:
+        return True
+    if (spans_x or spans_y) and area < 0.05 * image_area:
+        return True
+    return False
+
+
 def _border_samples(lab: np.ndarray, border: int) -> np.ndarray:
     return np.concatenate(
         [
@@ -240,8 +278,33 @@ def _classify(contour: np.ndarray) -> tuple[str, float]:
     if circularity >= 0.82 and solidity > 0.9:
         return "circle", solidity
     if len(approx) == 4 and cv2.isContourConvex(approx) and area / rect_area > 0.82 and solidity > 0.86:
-        return "rect", solidity
+        # A rounded corner bulges past the four-point fit. That is not a
+        # rectangle, and a perspective quad would cut the corner off.
+        _x, _y, bw, bh = cv2.boundingRect(contour)
+        allowance = max(7.0, 0.012 * float(min(bw, bh)))
+        if _edge_deviation(contour, approx) <= allowance:
+            return "rect", solidity
     return "irregular", solidity
+
+
+def _edge_deviation(contour: np.ndarray, approx: np.ndarray) -> float:
+    """Largest distance from the contour to the simplified polyline, in pixels."""
+    points = contour.reshape(-1, 2).astype(np.float32)
+    if len(points) > 500:
+        points = points[:: max(1, len(points) // 500)]
+    poly = approx.reshape(-1, 2).astype(np.float32)
+    if len(poly) < 2:
+        return 0.0
+    dist = np.full(len(points), np.inf, dtype=np.float32)
+    for index in range(len(poly)):
+        start = poly[index]
+        end = poly[(index + 1) % len(poly)]
+        edge = end - start
+        length = float(np.dot(edge, edge)) + 1e-6
+        t = np.clip(((points - start) @ edge) / length, 0.0, 1.0)
+        projection = start + t[:, None] * edge
+        dist = np.minimum(dist, np.linalg.norm(points - projection, axis=1))
+    return float(dist.max())
 
 
 def _simplify(contour: np.ndarray, shape: str) -> np.ndarray:
@@ -251,12 +314,17 @@ def _simplify(contour: np.ndarray, shape: str) -> np.ndarray:
     elif shape == "rect":
         epsilon = 0.015 * peri
     else:
-        epsilon = 0.006 * peri
+        # A fraction of the perimeter grows with the sticker and slices a
+        # rounded corner into one straight cut. Stay a few pixels off the
+        # contour instead. The floor stays above the few pixels the mask's
+        # open/close rounds off each point, or a blunted tip gets two vertices.
+        _x, _y, bw, bh = cv2.boundingRect(contour)
+        epsilon = max(4.0, 0.005 * float(min(bw, bh)))
     approx = cv2.approxPolyDP(contour, epsilon, True)
     if len(approx) < 3:
         return contour
-    if len(approx) > 100:
-        approx = cv2.approxPolyDP(contour, 0.012 * peri, True)
+    if len(approx) > 120:
+        approx = cv2.approxPolyDP(contour, epsilon * 1.8, True)
     return approx
 
 
@@ -286,8 +354,11 @@ def _touching_regions(mask: np.ndarray, candidates: list[Candidate], width: int,
     if not candidates:
         return False
     eroded = cv2.erode(mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)), iterations=1)
-    count, _ = cv2.connectedComponents((eroded > 0).astype(np.uint8))
-    # Background is one label. More components after erosion than candidates
-    # means a blob was bridged.
-    foreground_components = max(0, count - 1)
-    return foreground_components > len(candidates)
+    count, _, stats, _ = cv2.connectedComponentsWithStats((eroded > 0).astype(np.uint8))
+    if count <= 1 or stats is None:
+        return False
+    # Dust and bits of dark print are not extra stickers. Only regions large
+    # enough to be their own outline count.
+    min_area = max(80.0, 0.012 * width * height)
+    large = int(np.sum(stats[1:, cv2.CC_STAT_AREA] >= min_area))
+    return large > len(candidates)

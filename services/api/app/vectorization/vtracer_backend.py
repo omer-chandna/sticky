@@ -8,6 +8,7 @@ pixels are omitted, so the result is real path geometry rather than an embedded 
 from __future__ import annotations
 
 import io
+import re
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -16,7 +17,26 @@ from PIL import Image
 
 from app.core.images import downscale
 from app.vectorization.fidelity import fidelity_score
+from app.vectorization.redraw import RedrawConfig, flatten_artwork
 from app.vectorization.svgutil import count_paths, has_embedded_image, sanitize_svg
+
+# Redraw flattens the sticker into solid inks at 2x before tracing, so it can
+# start from more pixels than the other presets without lumpy paths.
+REDRAW_MAX_DIMENSION = 1800
+# Tuned on flat inks: stacked shapes avoid hairline gaps between regions.
+REDRAW_VTRACER = {
+    "colormode": "color",
+    "hierarchical": "stacked",
+    "mode": "spline",
+    "filter_speckle": 24,
+    "color_precision": 8,
+    "layer_difference": 4,
+    "corner_threshold": 60,
+    "length_threshold": 5.0,
+    "max_iterations": 10,
+    "splice_threshold": 45,
+    "path_precision": 3,
+}
 
 # Controls are 0–100 and map onto the VTracer parameters below.
 PRESETS: dict[str, dict[str, float]] = {
@@ -90,24 +110,21 @@ def vectorize_image(image_rgba: np.ndarray, config: VectorConfig | None = None) 
     if image_rgba.shape[2] == 3:
         alpha = np.full(image_rgba.shape[:2], 255, np.uint8)
         image_rgba = np.dstack([image_rgba, alpha])
-    working, _scale = downscale(image_rgba, config.max_dimension)
-    controls = _resolve_controls(config)
-    params = _vtracer_kwargs(controls)
-    buffer = io.BytesIO()
-    Image.fromarray(working, mode="RGBA").save(buffer, format="PNG")
-    raw_svg = vtracer.convert_raw_image_to_svg(buffer.getvalue(), img_format="png", **params)
+    redraw = config.preset == "redraw"
+    working, _scale = downscale(image_rgba, max(config.max_dimension, REDRAW_MAX_DIMENSION) if redraw else config.max_dimension)
     height, width = working.shape[:2]
-    if 'viewBox' not in raw_svg:
-        raw_svg = raw_svg.replace(
-            "<svg ",
-            f'<svg viewBox="0 0 {width} {height}" ',
-            1,
-        )
-    description = (
-        "Vector reconstruction. Paths are editable geometry traced from the cleaned artwork."
-        if controls["binary"] < 0.5
-        else "Monochrome vector reconstruction traced from the cleaned artwork."
-    )
+    if redraw:
+        flat = flatten_artwork(working, RedrawConfig())
+        trace_source = flat.image
+        params: dict[str, object] = dict(REDRAW_VTRACER)
+    else:
+        trace_source = working
+        params = _vtracer_kwargs(_resolve_controls(config))
+    buffer = io.BytesIO()
+    Image.fromarray(trace_source, mode="RGBA").save(buffer, format="PNG")
+    raw_svg = vtracer.convert_raw_image_to_svg(buffer.getvalue(), img_format="png", **params)
+    traced_h, traced_w = trace_source.shape[:2]
+    raw_svg = _set_viewport(raw_svg, traced_w, traced_h, width, height)
     svg = sanitize_svg(raw_svg, allow_embedded_png=False)
     # Record the mode in a comment the sanitizer keeps only if it is inside XML.
     # The desc element is added by the export step. Here we keep VTracer's svg.
@@ -138,10 +155,26 @@ def vectorize_image(image_rgba: np.ndarray, config: VectorConfig | None = None) 
         fidelity=round(score, 4),
         recommend_faithful=recommend,
         byte_size=len(svg.encode("utf-8")),
-        preset=config.preset if config.preset in PRESETS else "custom",
+        preset=config.preset if config.preset in PRESETS or redraw else "custom",
         parameters={**params, "preset": config.preset},
         warnings=warnings,
     )
+
+
+def _set_viewport(svg: str, traced_w: int, traced_h: int, width: int, height: int) -> str:
+    """Give the SVG its traced coordinate system and the working image's display size.
+
+    Redraw traces at 2x for smoother small shapes; the file should still open at
+    the restored sticker's size, and the fidelity check renders it at that size.
+    """
+    start = svg.find("<svg")
+    end = svg.find(">", start)
+    if start < 0 or end < 0:
+        return svg
+    tag = svg[start:end]
+    tag = re.sub(r'\s(width|height|viewBox)="[^"]*"', "", tag)
+    tag += f' viewBox="0 0 {traced_w} {traced_h}" width="{width}" height="{height}"'
+    return svg[:start] + tag + svg[end:]
 
 
 def _resolve_controls(config: VectorConfig) -> dict[str, float]:

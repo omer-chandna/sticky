@@ -187,6 +187,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         kind = request.kind
 
         def fn(progress: Any) -> dict[str, Any]:
+            if kind == "fuse":
+                if request.fuse is None:
+                    raise ValueError("A combine job needs at least two uploaded photos.")
+                return operations.fuse_uploads(storage, settings, request.fuse, progress)
             if kind == "restore":
                 if request.restore is None:
                     raise ValueError("A restore job needs restore settings.")

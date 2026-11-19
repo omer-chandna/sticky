@@ -30,14 +30,14 @@ class GeometryModel(BaseModel):
 class SegmentModel(BaseModel):
     refinement: float = Field(40, ge=0, le=100)
     feather: float = Field(0, ge=0, le=100)
-    backend: Literal["opencv", "rembg"] = "opencv"
+    backend: Literal["opencv", "rembg", "auto"] = "opencv"
 
 
 class RestoreModel(BaseModel):
     cleanup_strength: float = Field(25, ge=0, le=100)
     edge_smoothness: float = Field(12, ge=0, le=100)
     color_correction: float = Field(0, ge=0, le=100)
-    sharpness: float = Field(8, ge=0, le=100)
+    sharpness: float = Field(60, ge=0, le=100)
     brightness: float = Field(0, ge=-100, le=100)
     contrast: float = Field(0, ge=-100, le=100)
     saturation: float = Field(0, ge=-100, le=100)
@@ -54,6 +54,13 @@ class DetectRequest(BaseModel):
     max_candidates: int = Field(24, ge=1, le=48)
 
 
+class FuseRequest(BaseModel):
+    """Several overlapping photos of the same flat surface, combined into one upload."""
+
+    upload_ids: list[str] = Field(min_length=2, max_length=12)
+    name: str | None = Field(None, max_length=120)
+
+
 class RestoreRequest(BaseModel):
     upload_id: str
     quality: Literal["preview", "final"] = "preview"
@@ -65,7 +72,7 @@ class RestoreRequest(BaseModel):
 
 class VectorRequest(BaseModel):
     artifact_id: str
-    preset: Literal["logo", "illustration", "detailed", "monochrome", "custom"] = "illustration"
+    preset: Literal["logo", "illustration", "detailed", "monochrome", "redraw", "custom"] = "illustration"
     color_complexity: float | None = Field(None, ge=0, le=100)
     curve_smoothness: float | None = Field(None, ge=0, le=100)
     min_region: float | None = Field(None, ge=0, le=100)
@@ -113,7 +120,7 @@ class SvgExportRequest(BaseModel):
     artifact_id: str
     mode: Literal["vector", "hybrid"] = "hybrid"
     appearance: AppearanceModel = Field(default_factory=AppearanceModel)
-    preset: Literal["logo", "illustration", "detailed", "monochrome", "custom"] = "illustration"
+    preset: Literal["logo", "illustration", "detailed", "monochrome", "redraw", "custom"] = "illustration"
     color_complexity: float | None = Field(None, ge=0, le=100)
     curve_smoothness: float | None = Field(None, ge=0, le=100)
     min_region: float | None = Field(None, ge=0, le=100)
@@ -161,12 +168,13 @@ class ZipExportRequest(BaseModel):
     artifact_id: str
     mode: Literal["vector", "hybrid"] = "hybrid"
     appearance: AppearanceModel = Field(default_factory=AppearanceModel)
-    preset: Literal["logo", "illustration", "detailed", "monochrome", "custom"] = "illustration"
+    preset: Literal["logo", "illustration", "detailed", "monochrome", "redraw", "custom"] = "illustration"
     name: str = "sticker"
 
 
 class JobCreateRequest(BaseModel):
-    kind: Literal["restore", "vectorize", "export_png", "export_svg", "export_zip", "sheet"]
+    kind: Literal["fuse", "restore", "vectorize", "export_png", "export_svg", "export_zip", "sheet"]
+    fuse: FuseRequest | None = None
     restore: RestoreRequest | None = None
     vectorize: VectorRequest | None = None
     png: PngExportRequest | None = None

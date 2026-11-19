@@ -51,6 +51,10 @@ def segment_image(
         )
     backend_name = config.backend
     warnings: list[str] = []
+    if backend_name == "auto":
+        # Prefer the trained model when this server has it turned on; it copes with stickers
+        # whose edge colours match the surface. Otherwise fall back quietly to OpenCV.
+        backend_name = "rembg" if config.enable_rembg else "opencv"
     if backend_name == "rembg":
         if not config.enable_rembg:
             warnings.append(

@@ -24,6 +24,9 @@ import os
 import numpy as np
 
 
+_SESSIONS: dict[str, object] = {}
+
+
 class RembgUnavailable(RuntimeError):
     """rembg was requested but cannot run."""
 
@@ -51,7 +54,10 @@ class RembgSegmenter:
         from PIL import Image
 
         image = Image.fromarray(image_rgb)
-        session = new_session(self.model_name)
+        session = _SESSIONS.get(self.model_name)
+        if session is None:
+            # Loading the model takes about a second; keep it for later restores.
+            session = _SESSIONS[self.model_name] = new_session(self.model_name)
         result = remove(image, session=session)
         alpha = np.array(result.convert("RGBA"))[:, :, 3]
         warnings = [
